@@ -6,4 +6,3 @@ Export data from Cloduflare KV.
 
 1. `npm install`
 2. `npm run start`
-
