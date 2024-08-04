@@ -25,22 +25,16 @@ const requestKVData = ({ cursor = "", limit = 10 } = {}) =>
 		HttpClientResponse.json,
 		Effect.map((r: any) => ({
 			keys: Chunk.fromIterable(r.result.map((v: any) => v.name as string)),
-			cursor: r.result_info.cursor,
+			cursor: (r.result_info.cursor as string) || null,
 		})),
 	)
 
 //const streamKVData = () => Stream.unfoldEffect("", requestKVData);
 
 const streamKVData = () =>
-	Stream.unfoldEffect("", (cursor) =>
+	Stream.paginateChunkEffect("", (cursor) =>
 		requestKVData({ cursor }).pipe(
-			Effect.map((res) => {
-				if (res.cursor) {
-					return Option.some([res.keys, res.cursor])
-				} else {
-					return Option.none()
-				}
-			}),
+			Effect.andThen((page) => [page.keys, Option.fromNullable(page.cursor)]),
 		),
 	)
 
