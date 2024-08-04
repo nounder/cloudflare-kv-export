@@ -5,11 +5,11 @@ import {
 	HttpClientResponse,
 } from "@effect/platform"
 import { NodeRuntime, NodeSocket } from "@effect/platform-node"
-import { Console, Effect, Layer, Option, pipe, Stream } from "effect"
+import { Chunk, Console, Effect, Layer, Option, pipe, Stream } from "effect"
 
 const { CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID } = Bun.env
 
-const requestKVData = ({ cursor = "", limit = 100 }) =>
+const requestKVData = ({ cursor = "", limit = 10 } = {}) =>
 	pipe(
 		HttpClientRequest.get(
 			`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/keys`,
@@ -23,6 +23,10 @@ const requestKVData = ({ cursor = "", limit = 100 }) =>
 		HttpClientRequest.bearerToken(Bun.env.CF_API_KEY as string),
 		HttpClient.fetchOk,
 		HttpClientResponse.json,
+		Effect.map((r: any) => ({
+			keys: Chunk.fromIterable(r.result.map((v: any) => v.name as string)),
+			cursor: r.result_info.cursor,
+		})),
 	)
 
 //const streamKVData = () => Stream.unfoldEffect("", requestKVData);
@@ -30,9 +34,9 @@ const requestKVData = ({ cursor = "", limit = 100 }) =>
 const streamKVData = () =>
 	Stream.unfoldEffect("", (cursor) =>
 		requestKVData({ cursor }).pipe(
-			Effect.map((res: any) => {
-				if (res.result_info.cursor) {
-					return Option.some([res.result, res.result_info.cursor])
+			Effect.map((res) => {
+				if (res.cursor) {
+					return Option.some([res.keys, res.cursor])
 				} else {
 					return Option.none()
 				}
@@ -43,7 +47,7 @@ const streamKVData = () =>
 const program = Stream.runCollect(
 	//
 	streamKVData().pipe(Stream.take(5)),
-)
+).pipe(Effect.tap(Console.log))
 
 if (false) {
 	const DevToolsLive = DevTools.layerWebSocket().pipe(
