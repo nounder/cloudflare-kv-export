@@ -9,29 +9,27 @@ import { Console, Effect, Layer, Option, pipe, Stream } from "effect"
 
 const { CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID } = Bun.env
 
-const requestKVData = (cursor?: string) =>
+const requestKVData = ({ cursor = "", limit = 100 }) =>
 	pipe(
 		HttpClientRequest.get(
 			`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/keys`,
 			{
 				urlParams: {
-					limit: 10,
+					limit,
 					cursor: cursor || undefined,
 				},
 			},
 		),
 		HttpClientRequest.bearerToken(Bun.env.CF_API_KEY as string),
 		HttpClient.fetchOk,
-		Effect.tap((res) => Console.log(res)),
 		HttpClientResponse.json,
-		Effect.tap((res) => Console.log(res)),
 	)
 
 //const streamKVData = () => Stream.unfoldEffect("", requestKVData);
 
 const streamKVData = () =>
 	Stream.unfoldEffect("", (cursor) =>
-		requestKVData(cursor).pipe(
+		requestKVData({ cursor }).pipe(
 			Effect.map((res: any) => {
 				if (res.result_info.cursor) {
 					return Option.some([res.result, res.result_info.cursor])
