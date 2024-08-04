@@ -1,0 +1,22 @@
+{
+	"name": "cloudflare-kv-export-bun",
+	"module": "index.ts",
+	"type": "module",
+	"scripts": {
+		"start": "biome start"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	},
+	"peerDependencies": {
+		"typescript": "^5.0.0"
+	},
+	"dependencies": {
+		"@effect/experimental": "^0.21.2",
+		"@effect/platform": "^0.61.2",
+		"@effect/platform-node": "^0.56.2",
+		"@effect/schema": "^0.70.1",
+		"effect": "^3.6.0",
+		"unstorage": "^1.10.2"
+	}
+}
