@@ -1,27 +1,24 @@
-import { DevTools } from "@effect/experimental"
 import {
 	HttpClient,
 	HttpClientRequest,
 	HttpClientResponse,
 } from "@effect/platform"
-import { NodeRuntime, NodeSocket } from "@effect/platform-node"
-import { Chunk, Console, Effect, Layer, Option, pipe, Stream } from "effect"
+import { Chunk, Console, Effect, Option, pipe, Stream } from "effect"
 
 const { CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID } = Bun.env
 
-const requestKVData = ({ cursor = "", limit = 10 } = {}) =>
+const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/`
+
+const requestCfKvApi = (url: string) =>
 	pipe(
-		HttpClientRequest.get(
-			`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/keys`,
-			{
-				urlParams: {
-					limit,
-					cursor: cursor || undefined,
-				},
-			},
-		),
+		HttpClientRequest.get(new URL(url, CF_KV_URL)),
 		HttpClientRequest.bearerToken(Bun.env.CF_API_KEY as string),
 		HttpClient.fetchOk,
+	)
+
+const listKeys = ({ cursor = "", limit = 10 } = {}) =>
+	pipe(
+		requestCfKvApi(`keys`),
 		HttpClientResponse.json,
 		Effect.map((r: any) => ({
 			keys: Chunk.fromIterable(r.result.map((v: any) => v.name as string)),
@@ -29,30 +26,33 @@ const requestKVData = ({ cursor = "", limit = 10 } = {}) =>
 		})),
 	)
 
-//const streamKVData = () => Stream.unfoldEffect("", requestKVData);
-
-const streamKVData = () =>
+const streamKeys = ({ chunkSize = 1000 } = {}) =>
 	Stream.paginateChunkEffect("", (cursor) =>
-		requestKVData({ cursor }).pipe(
-			Effect.andThen((page) => [page.keys, Option.fromNullable(page.cursor)]),
+		listKeys({ cursor }).pipe(
+			Effect.andThen((page) => [
+				page.keys, //
+				Option.fromNullable(page.cursor),
+			]),
 		),
 	)
 
-const program = Stream.runCollect(
-	//
-	streamKVData().pipe(Stream.take(5)),
-).pipe(Effect.tap(Console.log))
-
-if (false) {
-	const DevToolsLive = DevTools.layerWebSocket().pipe(
-		Layer.provide(NodeSocket.layerWebSocketConstructor),
+const getKeyValue = (key: string) =>
+	pipe(
+		requestCfKvApi(`values/${key}`), //
+		HttpClientResponse.arrayBuffer,
 	)
 
-	program.pipe(Effect.provide(DevToolsLive), NodeRuntime.runMain)
-} else {
-	Effect.runFork(
-		Effect.tapErrorTag(program, "ResponseError", (e) =>
-			e.response.text.pipe(Effect.tap((text) => Console.error(text))),
-		),
+const getKeyMetadata = (key: string) =>
+	pipe(
+		requestCfKvApi(`values/${key}`),
+		HttpClientResponse.json,
+		Effect.map((r: any) => r.result as Record<string, string | number>),
 	)
-}
+
+const program = streamKeys().pipe(Stream.runForEach(Console.log))
+
+Effect.runFork(
+	Effect.tapErrorTag(program, "ResponseError", (e) =>
+		e.response.text.pipe(Effect.tap((text) => Console.error(text))),
+	),
+)
