@@ -77,15 +77,18 @@ const persistKeyValuePair = (
 	})
 
 const program = streamKeys().pipe(
-	Stream.mapEffect((key) =>
-		Effect.all(
-			{
-				key: Effect.succeed(key),
-				value: getKeyValue(key),
-				metadata: getKeyMetadata(key),
-			},
-			{ concurrency: "unbounded" },
-		),
+	Stream.mapEffect(
+		(key) =>
+			Effect.all(
+				{
+					key: Effect.succeed(key),
+					value: getKeyValue(key),
+					metadata: getKeyMetadata(key),
+				},
+				{ concurrency: "unbounded" },
+			),
+
+		{ concurrency: 20 },
 	),
 	Stream.runForEach(Console.log),
 )
