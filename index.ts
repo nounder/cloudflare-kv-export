@@ -1,17 +1,26 @@
 import {
+	FileSystem,
 	HttpClient,
 	HttpClientRequest,
 	HttpClientResponse,
+	KeyValueStore,
 } from "@effect/platform"
-import { Chunk, Console, Effect, Option, pipe, Stream } from "effect"
+import {
+	NodeFileSystem,
+	NodeKeyValueStore,
+	NodeRuntime,
+} from "@effect/platform-node"
+import { Chunk, Console, Effect, Layer, Option, pipe, Stream } from "effect"
 
 const { CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID } = Bun.env
 
-const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}/`
+const DATA_PATH = import.meta.resolve("./data")
+
+const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}`
 
 const requestCfKvApi = (url: string) =>
 	pipe(
-		HttpClientRequest.get(new URL(url, CF_KV_URL)),
+		HttpClientRequest.get(new URL(url, CF_KV_URL + "/")),
 		HttpClientRequest.bearerToken(Bun.env.CF_API_KEY as string),
 		HttpClient.fetchOk,
 	)
@@ -21,7 +30,7 @@ const listKeys = ({ cursor = "", limit = 10 } = {}) =>
 		requestCfKvApi(`keys`),
 		HttpClientResponse.json,
 		Effect.map((r: any) => ({
-			keys: Chunk.fromIterable(r.result.map((v: any) => v.name as string)),
+			keys: Chunk.fromIterable(r.result.map((v: any) => v.name) as string[]),
 			cursor: (r.result_info.cursor as string) || null,
 		})),
 	)
@@ -46,10 +55,27 @@ const getKeyMetadata = (key: string) =>
 	pipe(
 		requestCfKvApi(`metadata/${encodeURIComponent(key)}`),
 		HttpClientResponse.json,
-		Effect.map((r: any) => r.result as Record<string, string | number>),
+		Effect.map((r: any) => r.result as Record<string, any>),
 	)
 
-const program = streamKeys().pipe(Stream.runForEach(Console.log))
+const persistKeyValuePair = (
+	key: string,
+	value: string,
+	metadata?: string | Record<string, any>,
+) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem
+		const kv = yield* KeyValueStore.KeyValueStore
+
+		yield* Effect.all([
+			kv.set(key, value),
+			kv.set(
+				key + ":__metadata",
+				typeof metadata === "string" ? metadata : JSON.stringify(metadata),
+			),
+		])
+	})
+
 const program = streamKeys().pipe(
 	Stream.mapEffect((key) =>
 		Effect.all(
@@ -64,8 +90,9 @@ const program = streamKeys().pipe(
 	Stream.runForEach(Console.log),
 )
 
-Effect.runFork(
-	Effect.tapErrorTag(program, "ResponseError", (e) =>
-		e.response.text.pipe(Effect.tap((text) => Console.error(text))),
+NodeRuntime.runMain(
+	program.pipe(
+		Effect.provide(NodeKeyValueStore.layerFileSystem(DATA_PATH)),
+		Effect.provide(NodeFileSystem.layer),
 	),
 )
