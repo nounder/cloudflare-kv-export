@@ -50,6 +50,19 @@ const getKeyMetadata = (key: string) =>
 	)
 
 const program = streamKeys().pipe(Stream.runForEach(Console.log))
+const program = streamKeys().pipe(
+	Stream.mapEffect((key) =>
+		Effect.all(
+			{
+				key: Effect.succeed(key),
+				value: getKeyValue(key),
+				metadata: getKeyMetadata(key),
+			},
+			{ concurrency: "unbounded" },
+		),
+	),
+	Stream.runForEach(Console.log),
+)
 
 Effect.runFork(
 	Effect.tapErrorTag(program, "ResponseError", (e) =>
