@@ -18,7 +18,7 @@ const typeson = new Typeson().register([typesonBuiltin])
 
 const { CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID } = Bun.env
 
-const DATA_PATH = __dirname + "/data"
+const OUT_PATH = __dirname + "/out"
 
 const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}`
 
@@ -101,7 +101,7 @@ const program = streamKeys().pipe(
 
 NodeRuntime.runMain(
 	program.pipe(
-		Effect.provide(NodeKeyValueStore.layerFileSystem(DATA_PATH)),
+		Effect.provide(NodeKeyValueStore.layerFileSystem(OUT_PATH)),
 		Effect.provide(NodeFileSystem.layer),
 	),
 )
