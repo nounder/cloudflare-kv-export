@@ -1,7 +1,6 @@
 import { Typeson } from "typeson"
 import { builtin as typesonBuiltin } from "typeson-registry"
 import {
-	FileSystem,
 	HttpClient,
 	HttpClientRequest,
 	HttpClientResponse,
@@ -12,7 +11,7 @@ import {
 	NodeKeyValueStore,
 	NodeRuntime,
 } from "@effect/platform-node"
-import { Chunk, Console, Effect, Layer, Option, pipe, Stream } from "effect"
+import { Chunk, Console, Effect, Option, pipe, Stream } from "effect"
 
 const typeson = new Typeson().register([typesonBuiltin])
 
@@ -22,16 +21,17 @@ const OUT_PATH = __dirname + "/out"
 
 const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}`
 
-const requestCfKvApi = (url: string) =>
+const requestCfKvApi = (url: string, { params = {} } = {}) =>
 	pipe(
 		HttpClientRequest.get(new URL(url, CF_KV_URL + "/")),
 		HttpClientRequest.bearerToken(Bun.env.CF_API_KEY as string),
+		HttpClientRequest.setUrlParams(params),
 		HttpClient.fetchOk,
 	)
 
-const listKeys = ({ cursor = "", limit = 10 } = {}) =>
+const listKeys = ({ cursor = "", limit = 1000 } = {}) =>
 	pipe(
-		requestCfKvApi(`keys`),
+		requestCfKvApi(`keys`, { params: { cursor, limit } }),
 		HttpClientResponse.json,
 		Effect.map((r: any) => ({
 			keys: Chunk.fromIterable(r.result.map((v: any) => v.name) as string[]),
@@ -39,9 +39,9 @@ const listKeys = ({ cursor = "", limit = 10 } = {}) =>
 		})),
 	)
 
-const streamKeys = ({ chunkSize = 1000 } = {}) =>
-	Stream.paginateChunkEffect("", (cursor) =>
-		listKeys({ cursor }).pipe(
+const streamKeys = ({ cursor = "" } = {}) =>
+	Stream.paginateChunkEffect(cursor, (curCursor) =>
+		listKeys({ cursor: curCursor }).pipe(
 			Effect.andThen((page) => [
 				page.keys, //
 				Option.fromNullable(page.cursor),
@@ -51,8 +51,7 @@ const streamKeys = ({ chunkSize = 1000 } = {}) =>
 
 const getKeyValue = (key: string) =>
 	pipe(
-		requestCfKvApi(`values/${encodeURIComponent(key)}`),
-		HttpClientResponse.arrayBuffer,
+		requestCfKvApi(`values/${encodeURIComponent(key)}`), //
 	)
 
 const getKeyMetadata = (key: string) =>
@@ -65,7 +64,7 @@ const getKeyMetadata = (key: string) =>
 const persistKeyValuePair = (
 	key: string,
 	value: any,
-	metadata?: string | Record<string, any>,
+	metadata?: Record<string, any>,
 ) =>
 	Effect.gen(function* () {
 		const kv = yield* KeyValueStore.KeyValueStore
@@ -74,21 +73,21 @@ const persistKeyValuePair = (
 			kv.set(key, typeson.stringifySync(value)),
 
 			metadata
-				? kv.set(
-						key + ":__metadata",
-						typeof metadata === "string" ? metadata : JSON.stringify(metadata),
-				  )
+				? kv.set(key + ":__metadata", JSON.stringify(metadata))
 				: Effect.succeedNone,
 		])
 	})
 
 const program = streamKeys().pipe(
+	Stream.filter((key) => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
 	Stream.mapEffect(
 		(key) =>
 			Effect.all(
 				{
 					key: Effect.succeed(key),
-					value: getKeyValue(key),
+					value: getKeyValue(key).pipe(
+						HttpClientResponse.json, //
+					),
 				},
 				{ concurrency: "unbounded" },
 			),
