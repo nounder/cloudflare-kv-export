@@ -18,7 +18,7 @@ const typeson = new Typeson().register([typesonBuiltin])
 
 const { CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID } = Bun.env
 
-const DATA_PATH = import.meta.resolve("./data")
+const DATA_PATH = __dirname + "/data"
 
 const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}`
 
