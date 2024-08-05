@@ -1,3 +1,5 @@
+import { Typeson } from "typeson"
+import { builtin as typesonBuiltin } from "typeson-registry"
 import {
 	FileSystem,
 	HttpClient,
@@ -11,6 +13,8 @@ import {
 	NodeRuntime,
 } from "@effect/platform-node"
 import { Chunk, Console, Effect, Layer, Option, pipe, Stream } from "effect"
+
+const typeson = new Typeson().register([typesonBuiltin])
 
 const { CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID } = Bun.env
 
@@ -60,19 +64,21 @@ const getKeyMetadata = (key: string) =>
 
 const persistKeyValuePair = (
 	key: string,
-	value: string,
+	value: any,
 	metadata?: string | Record<string, any>,
 ) =>
 	Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem
 		const kv = yield* KeyValueStore.KeyValueStore
 
 		yield* Effect.all([
-			kv.set(key, value),
-			kv.set(
-				key + ":__metadata",
-				typeof metadata === "string" ? metadata : JSON.stringify(metadata),
-			),
+			kv.set(key, typeson.stringifySync(value)),
+
+			metadata
+				? kv.set(
+						key + ":__metadata",
+						typeof metadata === "string" ? metadata : JSON.stringify(metadata),
+				  )
+				: Effect.succeedNone,
 		])
 	})
 
@@ -83,13 +89,13 @@ const program = streamKeys().pipe(
 				{
 					key: Effect.succeed(key),
 					value: getKeyValue(key),
-					metadata: getKeyMetadata(key),
 				},
 				{ concurrency: "unbounded" },
 			),
 
-		{ concurrency: 20 },
+		{ concurrency: 1 },
 	),
+	Stream.tap(({ key, value }) => persistKeyValuePair(key, value)),
 	Stream.runForEach(Console.log),
 )
 

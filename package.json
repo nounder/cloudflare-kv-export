@@ -17,6 +17,8 @@
 		"@effect/platform-node": "^0.56.2",
 		"@effect/schema": "^0.70.1",
 		"effect": "^3.6.0",
+		"typeson": "^9.0.3",
+		"typeson-registry": "^11.0.0",
 		"unstorage": "^1.10.2"
 	}
 }
