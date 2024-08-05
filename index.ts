@@ -38,13 +38,13 @@ const streamKeys = ({ chunkSize = 1000 } = {}) =>
 
 const getKeyValue = (key: string) =>
 	pipe(
-		requestCfKvApi(`values/${key}`), //
+		requestCfKvApi(`values/${encodeURIComponent(key)}`),
 		HttpClientResponse.arrayBuffer,
 	)
 
 const getKeyMetadata = (key: string) =>
 	pipe(
-		requestCfKvApi(`values/${key}`),
+		requestCfKvApi(`metadata/${encodeURIComponent(key)}`),
 		HttpClientResponse.json,
 		Effect.map((r: any) => r.result as Record<string, string | number>),
 	)
