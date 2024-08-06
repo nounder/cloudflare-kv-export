@@ -4,8 +4,6 @@ import {
 	HttpClientResponse,
 } from "@effect/platform"
 import { Chunk, Effect, Option, pipe, Stream } from "effect"
-import { Typeson } from "typeson"
-import { builtin as typesonBuiltin } from "typeson-registry"
 
 const { CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID } = process.env
 
@@ -30,9 +28,10 @@ export const listKeys = ({ cursor = "", limit = 1000 } = {}) =>
 	)
 
 export const streamKeys = ({ cursor = "" } = {}) =>
-	Stream.paginateChunkEffect(cursor, (curCursor) =>
-		listKeys({ cursor: curCursor }).pipe(
-			Effect.andThen((page) => [
+	Stream.paginateChunkEffect(cursor, curCursor =>
+		pipe(
+			listKeys({ cursor: curCursor }),
+			Effect.andThen(page => [
 				page.keys, //
 				Option.fromNullable(page.cursor),
 			]),
@@ -58,7 +57,7 @@ export const getKeyValuePair = (key: string, withMetadata = false) =>
 			value: getKeyValue(key).pipe(
 				HttpClientResponse.json, //
 			),
-			metadata: withMetadata ? getKeyMetadata(key) : Effect.succeedNone,
+			metadata: withMetadata ? getKeyMetadata(key) : Effect.succeed(null),
 		},
 		{ concurrency: "unbounded" },
 	)

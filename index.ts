@@ -1,6 +1,6 @@
-import { Console, Effect, Stream } from "effect"
+import { Chunk, Console, Effect, Metric, pipe, Schedule, Stream } from "effect"
 import * as CFKV from "./cfkv"
-import { KeyValueStore } from "@effect/platform"
+import { FileSystem, KeyValueStore, Path } from "@effect/platform"
 import { Typeson } from "typeson"
 import { builtin as typesonBuiltin } from "typeson-registry"
 import {
@@ -30,17 +30,63 @@ const persistKeyValuePair = (
 		])
 	})
 
-const program = CFKV.streamKeys().pipe(
-	Stream.filter((key) => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
-	Stream.mapEffect((key) => CFKV.getKeyValuePair(key, false), {
-		concurrency: 1,
-	}),
-	Stream.tap(({ key, value }) => persistKeyValuePair(key, value)),
-	Stream.runForEach(Console.log),
+const keysCounter = Metric.counter("keys").pipe(Metric.withConstantInput(1))
+
+const processedKeysCounter = Metric.counter("processedKeys").pipe(
+	Metric.withConstantInput(1),
 )
+
+const scheduledLogging = pipe(
+	Effect.all({
+		keysCounter: Metric.value(keysCounter),
+		processedKeysCounter: Metric.value(processedKeysCounter),
+	}),
+	Effect.flatMap(v =>
+		Console.log(
+			`Keys: count=${v.keysCounter.count} processed=${v.processedKeysCounter.count}`,
+		),
+	),
+	Effect.repeat(Schedule.spaced("2000 millis")),
+)
+
+const dumpKVData = pipe(
+	CFKV.streamKeys(),
+	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
+	Stream.tap(v => keysCounter(Effect.succeedNone)),
+	Stream.tap(Console.log),
+	Stream.mapEffect(key => CFKV.getKeyValuePair(key, false)),
+	Stream.map(v => persistKeyValuePair(v.key, v.value)),
+	Stream.tap(v => processedKeysCounter(v)),
+	// drain the stream and ignore the output and convert to an Effect
+	Stream.runDrain,
+)
+
+const listFileSystemKeyValueStore = pipe(
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem
+
+		const keys = yield* fs.readDirectory(OUT_PATH, { recursive: true })
+		const resolvedKeys = keys.map(f => decodeURIComponent(f))
+
+		resolvedKeys.sort()
+
+		return Chunk.unsafeFromArray(resolvedKeys)
+	}),
+)
+
+const loadKvData = pipe(
+	listFileSystemKeyValueStore, //
+)
+
+const program = Effect.gen(function* () {
+	yield* Effect.fork(scheduledLogging)
+
+	yield* dumpKVData
+})
 
 NodeRuntime.runMain(
 	program.pipe(
+		Effect.provide(Path.layer),
 		Effect.provide(NodeKeyValueStore.layerFileSystem(OUT_PATH)),
 		Effect.provide(NodeFileSystem.layer),
 	),
