@@ -53,9 +53,14 @@ const dumpKVData = pipe(
 	CFKV.streamKeys(),
 	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
 	Stream.tap(v => keysCounter(Effect.succeedNone)),
-	Stream.tap(Console.log),
-	Stream.mapEffect(key => CFKV.getKeyValuePair(key, false)),
-	Stream.map(v => persistKeyValuePair(v.key, v.value)),
+	Stream.mapEffect(
+		key =>
+			pipe(
+				CFKV.getKeyValuePair(key, false),
+				Effect.map(v => persistKeyValuePair(v.key, v.value)),
+			),
+		{ concurrency: 100 },
+	),
 	Stream.tap(v => processedKeysCounter(v)),
 	// drain the stream and ignore the output and convert to an Effect
 	Stream.runDrain,
