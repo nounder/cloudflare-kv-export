@@ -5,9 +5,9 @@ import {
 } from "@effect/platform"
 import { Chunk, Effect, Option, pipe, Stream } from "effect"
 
-const { CF_ACCOUNT_ID, CF_KV_NAMESPACE_ID } = process.env
+const { CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_KV_NAMESPACE_ID } = process.env
 
-const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/storage/kv/namespaces/${CF_KV_NAMESPACE_ID}`
+const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/${CLOUDFLARE_KV_NAMESPACE_ID}`
 
 const requestCfKvApi = (url: string, { params = {} } = {}) =>
 	pipe(
@@ -27,10 +27,10 @@ export const listKeys = ({ cursor = "", limit = 1000 } = {}) =>
 		})),
 	)
 
-export const streamKeys = ({ cursor = "" } = {}) =>
+export const streamKeys = ({ cursor = "", limit = 1000 } = {}) =>
 	Stream.paginateChunkEffect(cursor, curCursor =>
 		pipe(
-			listKeys({ cursor: curCursor }),
+			listKeys({ cursor: curCursor, limit }),
 			Effect.andThen(page => [
 				page.keys, //
 				Option.fromNullable(page.cursor),
