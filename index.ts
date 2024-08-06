@@ -1,13 +1,13 @@
-import { Chunk, Console, Effect, Metric, pipe, Schedule, Stream } from "effect"
-import * as CFKV from "./cfkv"
 import { FileSystem, KeyValueStore, Path } from "@effect/platform"
-import { Typeson } from "typeson"
-import { builtin as typesonBuiltin } from "typeson-registry"
 import {
 	NodeFileSystem,
 	NodeKeyValueStore,
 	NodeRuntime,
 } from "@effect/platform-node"
+import { Chunk, Console, Effect, Metric, pipe, Schedule, Stream } from "effect"
+import { Typeson } from "typeson"
+import { builtin as typesonBuiltin } from "typeson-registry"
+import * as CFKV from "./cfkv"
 
 const OUT_PATH = __dirname + "/out"
 
@@ -52,14 +52,25 @@ const scheduledLogging = pipe(
 const dumpKVData = pipe(
 	CFKV.streamKeys(),
 	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
-	Stream.tap(v => keysCounter(Effect.succeedNone)),
+	// Global rate limit is 1200 requests per 5 minutes
+	// We limit it to 1000 requests per 5 minutes (or 4 rps) to give some
+	// wiggling room for other services to run.
+	// We also make chunks smaller for Stream.throttle
+	// See: https://developers.cloudflare.com/fundamentals/api/reference/limits/
+	Stream.rechunk(10),
+	Stream.throttle({
+		cost: Chunk.size,
+		duration: "1 second",
+		units: 4,
+	}),
+	Stream.tap(_ => keysCounter(Effect.succeedNone)),
 	Stream.mapEffect(
 		key =>
 			pipe(
 				CFKV.getKeyValuePair(key, false),
 				Effect.map(v => persistKeyValuePair(v.key, v.value)),
 			),
-		{ concurrency: 100 },
+		{ concurrency: "unbounded" },
 	),
 	Stream.tap(v => processedKeysCounter(v)),
 	// drain the stream and ignore the output and convert to an Effect
