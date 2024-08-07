@@ -1,5 +1,6 @@
 import { FileSystem, KeyValueStore, Path } from "@effect/platform"
 import {
+	NodeContext,
 	NodeFileSystem,
 	NodeKeyValueStore,
 	NodeRuntime,
@@ -7,6 +8,7 @@ import {
 import { Chunk, Console, Effect, Metric, pipe, Schedule, Stream } from "effect"
 import * as CFKV from "./cfkv"
 import { typeson } from "./utils"
+import { Command, Options } from "@effect/cli"
 
 const OUT_PATH = __dirname + "/out"
 
@@ -46,6 +48,9 @@ const scheduledLogging = pipe(
 	Effect.repeat(Schedule.spaced("2000 millis")),
 )
 
+/**
+ * Dumps KV data using helper worker instead of using heavy rate-limited Cloudflare API.
+ */
 const dumpKVDataWithWorker = pipe(
 	CFKV.streamKeys(),
 	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
@@ -100,33 +105,63 @@ const dumpKVData = pipe(
 	Stream.runDrain,
 )
 
-const listFileSystemKeyValueStore = pipe(
-	Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem
+const listFileSystemKeyValueStore = Effect.gen(function* () {
+	const fs = yield* FileSystem.FileSystem
 
-		const keys = yield* fs.readDirectory(OUT_PATH, { recursive: true })
-		const resolvedKeys = keys.map(f => decodeURIComponent(f))
+	const keys = yield* fs.readDirectory(OUT_PATH, { recursive: true })
+	const resolvedKeys = keys.map(f => decodeURIComponent(f))
 
-		resolvedKeys.sort()
+	resolvedKeys.sort()
 
-		return Chunk.unsafeFromArray(resolvedKeys)
-	}),
-)
+	return Chunk.unsafeFromArray(resolvedKeys)
+})
 
 const loadKvData = pipe(
 	listFileSystemKeyValueStore, //
 )
 
-const program = Effect.gen(function* () {
-	yield* Effect.fork(scheduledLogging)
+const Commands = {
+	dump: Command.make(
+		"dump",
+		{
+			worker: Options.boolean("worker"),
+		},
+		args => {
+			return Effect.gen(function* () {
+				yield* Effect.fork(scheduledLogging)
 
-	yield* dumpKVDataWithWorker
+				if (args.worker) {
+					yield* dumpKVDataWithWorker
+				} else {
+					yield* dumpKVData
+				}
+			})
+		},
+	),
+
+	list: Command.make("list", {}, args =>
+		Effect.gen(function* () {
+			const keys = yield* loadKvData
+
+			yield* Effect.forEach(keys, key => Console.log(key))
+		}),
+	),
+}
+
+const mainCommand = Command.make("cloudflare-kv-export").pipe(
+	Command.withSubcommands([Commands.dump, Commands.list]),
+)
+
+const cli = Command.run(mainCommand, {
+	name: "Cloudflare KV export",
+	version: "v0.1.0",
 })
 
-NodeRuntime.runMain(
-	program.pipe(
-		Effect.provide(Path.layer),
-		Effect.provide(NodeKeyValueStore.layerFileSystem(OUT_PATH)),
-		Effect.provide(NodeFileSystem.layer),
-	),
+pipe(
+	cli(process.argv),
+	Effect.provide(Path.layer),
+	Effect.provide(NodeKeyValueStore.layerFileSystem(OUT_PATH)),
+	Effect.provide(NodeContext.layer),
+	Effect.provide(NodeFileSystem.layer),
+	NodeRuntime.runMain,
 )
