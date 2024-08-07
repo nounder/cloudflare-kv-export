@@ -67,3 +67,12 @@ export const getKeyValuePair = (key: string, withMetadata = false) =>
 		},
 		{ concurrency: "unbounded" },
 	)
+
+export const getKeyValuePairsWithWorker = (keys: string[]) =>
+	pipe(
+		HttpClientRequest.post(WORKER_URL as string), //
+		HttpClientRequest.jsonBody({ keys }),
+		Effect.andThen(HttpClient.fetchOk),
+		HttpClientResponse.json,
+		Effect.andThen(r => r as [string, any]),
+	)

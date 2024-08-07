@@ -46,6 +46,31 @@ const scheduledLogging = pipe(
 	Effect.repeat(Schedule.spaced("2000 millis")),
 )
 
+const dumpKVDataWithWorker = pipe(
+	CFKV.streamKeys(),
+	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
+	Stream.rechunk(10),
+	Stream.throttle({
+		cost: Chunk.size,
+		duration: "1 second",
+		units: 100,
+	}),
+	Stream.tap(_ => keysCounter(Effect.succeedNone)),
+	// start operating on chunks
+	Stream.chunks,
+	Stream.mapEffect(
+		chunk => CFKV.getKeyValuePairsWithWorker(Chunk.toArray(chunk)),
+		{
+			concurrency: "unbounded",
+		},
+	),
+	Stream.mapEffect(([k, v]) => persistKeyValuePair(k, v), {
+		concurrency: "unbounded",
+	}),
+	Stream.tap(_ => processedKeysCounter(Effect.succeedNone)),
+	Stream.runDrain,
+)
+
 const dumpKVData = pipe(
 	CFKV.streamKeys(),
 	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
@@ -94,7 +119,7 @@ const loadKvData = pipe(
 const program = Effect.gen(function* () {
 	yield* Effect.fork(scheduledLogging)
 
-	yield* dumpKVData
+	yield* dumpKVDataWithWorker
 })
 
 NodeRuntime.runMain(

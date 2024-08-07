@@ -1,21 +1,15 @@
-import { Typeson } from "typeson"
-import { builtin as typesonBuiltin } from "typeson-registry"
-
-const typeson = new Typeson().register([typesonBuiltin])
-
 export default {
+	/**
+	 * Returns key-value pairs for the given keys decoded for specific type.
+	 */
 	async fetch(request, env, ctx): Promise<Response> {
 		const { keys, type = "json"} = await request.json() as any
 
-		const kvPairs = {}
 
-		for (const key of keys) {
-			const value = await env.KV.get(key, type)
+		const values = await Promise.all(keys.map(key => env.KV.get(key, type)))
+		const pairs = Array.from(values, (value, i) => [keys[i], value])
 
-			kvPairs[key] = value
-		}
-
-		return new Response(JSON.stringify(kvPairs), {
+		return new Response(JSON.stringify(pairs), {
 			headers: { 'content-type': 'application/json' },
 		})
 
