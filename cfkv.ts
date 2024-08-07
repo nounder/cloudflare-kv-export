@@ -4,7 +4,6 @@ import {
 	HttpClientResponse,
 } from "@effect/platform"
 import { Chunk, Console, Effect, Option, pipe, Stream } from "effect"
-import { typeson } from "./utils"
 
 const {
 	CLOUDFLARE_ACCOUNT_ID,
@@ -68,11 +67,11 @@ export const getKeyValuePair = (key: string, withMetadata = false) =>
 		{ concurrency: "unbounded" },
 	)
 
-export const getKeyValuePairsWithWorker = (keys: string[]) =>
+export const getKeyValuePairsWithWorker = (keys: readonly string[]) =>
 	pipe(
 		HttpClientRequest.post(WORKER_URL as string), //
 		HttpClientRequest.jsonBody({ keys }),
 		Effect.andThen(HttpClient.fetchOk),
 		HttpClientResponse.json,
-		Effect.andThen(r => r as [string, any]),
+		Effect.andThen(v => v as [key: string, value: any][]),
 	)

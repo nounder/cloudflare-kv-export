@@ -49,20 +49,18 @@ const scheduledLogging = pipe(
 const dumpKVDataWithWorker = pipe(
 	CFKV.streamKeys(),
 	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
-	Stream.rechunk(10),
+	Stream.rechunk(64),
 	Stream.throttle({
 		cost: Chunk.size,
 		duration: "1 second",
-		units: 100,
+		units: 1000,
 	}),
 	Stream.tap(_ => keysCounter(Effect.succeedNone)),
-	// start operating on chunks
-	Stream.chunks,
-	Stream.mapEffect(
-		chunk => CFKV.getKeyValuePairsWithWorker(Chunk.toArray(chunk)),
-		{
-			concurrency: "unbounded",
-		},
+	Stream.rechunk(128),
+	Stream.mapChunksEffect(chunk =>
+		CFKV.getKeyValuePairsWithWorker(Chunk.toReadonlyArray(chunk)).pipe(
+			Effect.andThen(Chunk.unsafeFromArray),
+		),
 	),
 	Stream.mapEffect(([k, v]) => persistKeyValuePair(k, v), {
 		concurrency: "unbounded",
@@ -71,14 +69,17 @@ const dumpKVDataWithWorker = pipe(
 	Stream.runDrain,
 )
 
+/**
+ * Dumps KV using Cloudflare API.
+ * Global rate limit is 1200 requests per 5 minutes
+ * We limit it to 1000 requests per 5 minutes (or 4 rps) to give some
+ * wiggling room for other services to run.
+ * We also make chunks smaller for Stream.throttle
+ * See: https://developers.cloudflare.com/fundamentals/api/reference/limits/
+ */
 const dumpKVData = pipe(
 	CFKV.streamKeys(),
 	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
-	// Global rate limit is 1200 requests per 5 minutes
-	// We limit it to 1000 requests per 5 minutes (or 4 rps) to give some
-	// wiggling room for other services to run.
-	// We also make chunks smaller for Stream.throttle
-	// See: https://developers.cloudflare.com/fundamentals/api/reference/limits/
 	Stream.rechunk(10),
 	Stream.throttle({
 		cost: Chunk.size,
