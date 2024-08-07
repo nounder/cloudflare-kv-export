@@ -9,7 +9,6 @@ const {
 	CLOUDFLARE_ACCOUNT_ID,
 	CLOUDFLARE_KV_NAMESPACE_ID,
 	CLOUDFLARE_API_KEY,
-	WORKER_URL,
 } = process.env
 
 const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/${CLOUDFLARE_KV_NAMESPACE_ID}`
@@ -67,9 +66,12 @@ export const getKeyValuePair = (key: string, withMetadata = false) =>
 		{ concurrency: "unbounded" },
 	)
 
-export const getKeyValuePairsWithWorker = (keys: readonly string[]) =>
+export const getKeyValuePairsWithWorker = (
+	keys: readonly string[],
+	workerUrl: string,
+) =>
 	pipe(
-		HttpClientRequest.post(WORKER_URL as string), //
+		HttpClientRequest.post(workerUrl),
 		HttpClientRequest.jsonBody({ keys }),
 		Effect.andThen(HttpClient.fetchOk),
 		HttpClientResponse.json,

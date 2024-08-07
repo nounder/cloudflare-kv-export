@@ -5,12 +5,19 @@ import {
 	NodeKeyValueStore,
 	NodeRuntime,
 } from "@effect/platform-node"
-import { Chunk, Console, Effect, Metric, pipe, Schedule, Stream } from "effect"
+import {
+	Chunk,
+	Console,
+	Effect,
+	Metric,
+	Option,
+	pipe,
+	Schedule,
+	Stream,
+} from "effect"
 import * as CFKV from "./cfkv"
 import { typeson } from "./utils"
 import { Command, Options } from "@effect/cli"
-
-const OUT_PATH = __dirname + "/out"
 
 const persistKeyValuePair = (
 	key: string,
@@ -51,28 +58,30 @@ const scheduledLogging = pipe(
 /**
  * Dumps KV data using helper worker instead of using heavy rate-limited Cloudflare API.
  */
-const dumpKVDataWithWorker = pipe(
-	CFKV.streamKeys(),
-	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
-	Stream.rechunk(64),
-	Stream.throttle({
-		cost: Chunk.size,
-		duration: "1 second",
-		units: 1000,
-	}),
-	Stream.tap(_ => keysCounter(Effect.succeedNone)),
-	Stream.rechunk(128),
-	Stream.mapChunksEffect(chunk =>
-		CFKV.getKeyValuePairsWithWorker(Chunk.toReadonlyArray(chunk)).pipe(
-			Effect.andThen(Chunk.unsafeFromArray),
+const dumpKVDataWithWorker = (args: { workerUrl: string }) =>
+	pipe(
+		CFKV.streamKeys(),
+		Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
+		Stream.rechunk(64),
+		Stream.throttle({
+			cost: Chunk.size,
+			duration: "1 second",
+			units: 1000,
+		}),
+		Stream.tap(_ => keysCounter(Effect.succeedNone)),
+		Stream.rechunk(128),
+		Stream.mapChunksEffect(chunk =>
+			CFKV.getKeyValuePairsWithWorker(
+				Chunk.toReadonlyArray(chunk),
+				args.workerUrl,
+			).pipe(Effect.andThen(Chunk.unsafeFromArray)),
 		),
-	),
-	Stream.mapEffect(([k, v]) => persistKeyValuePair(k, v), {
-		concurrency: "unbounded",
-	}),
-	Stream.tap(_ => processedKeysCounter(Effect.succeedNone)),
-	Stream.runDrain,
-)
+		Stream.mapEffect(([k, v]) => persistKeyValuePair(k, v), {
+			concurrency: "unbounded",
+		}),
+		Stream.tap(_ => processedKeysCounter(Effect.succeedNone)),
+		Stream.runDrain,
+	)
 
 /**
  * Dumps KV using Cloudflare API.
@@ -105,54 +114,61 @@ const dumpKVData = pipe(
 	Stream.runDrain,
 )
 
-const listFileSystemKeyValueStore = Effect.gen(function* () {
-	const fs = yield* FileSystem.FileSystem
+const listFileSystemKeyValueStore = (path: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem
 
-	const keys = yield* fs.readDirectory(OUT_PATH, { recursive: true })
-	const resolvedKeys = keys.map(f => decodeURIComponent(f))
+		const keys = yield* fs.readDirectory(path, { recursive: true })
+		const resolvedKeys = keys.map(f => decodeURIComponent(f))
 
-	resolvedKeys.sort()
+		resolvedKeys.sort()
 
-	return Chunk.unsafeFromArray(resolvedKeys)
-})
+		return Chunk.unsafeFromArray(resolvedKeys)
+	})
 
-const loadKvData = pipe(
-	listFileSystemKeyValueStore, //
+const dumpCommand = Command.make(
+	"dump",
+	{
+		outdir: Options.directory("outdir").pipe(Options.withDefault("dump/")),
+		worker: Options.text("worker").pipe(
+			Options.optional,
+			Options.withDescription("URL to a auxilary worker for faster exporting"),
+		),
+	},
+	args => {
+		return Effect.gen(function* () {
+			const path = yield* Path.Path
+
+			yield* Effect.fork(scheduledLogging)
+
+			const workerUrl = Option.getOrNull(args.worker)
+			const dumpEffect = workerUrl
+				? dumpKVDataWithWorker({ workerUrl })
+				: dumpKVData
+
+			if (!workerUrl) {
+				yield* Console.log(
+					"Using Cloudflare API to dump data. This will be slow. Consider passing --worker",
+				)
+			} else {
+				yield* Console.log("Using worker to fetch data:")
+				yield* Console.log("Worker URL:\t" + workerUrl)
+			}
+
+			yield* Console.log("Dump directory\t" + path.resolve(args.outdir) + "\n")
+
+			yield* pipe(
+				dumpEffect,
+
+				Effect.provide(NodeKeyValueStore.layerFileSystem(args.outdir)),
+			)
+
+			yield* Console.log("Done!")
+		})
+	},
 )
 
-const Commands = {
-	dump: Command.make(
-		"dump",
-		{
-			worker: Options.boolean("worker"),
-		},
-		args => {
-			return Effect.gen(function* () {
-				yield* Effect.fork(scheduledLogging)
-
-				if (args.worker) {
-					yield* dumpKVDataWithWorker
-				} else {
-					yield* dumpKVData
-				}
-			})
-		},
-	),
-
-	list: Command.make("list", {}, args =>
-		Effect.gen(function* () {
-			const keys = yield* loadKvData
-
-			yield* Effect.forEach(keys, key => Console.log(key))
-		}),
-	),
-}
-
-const mainCommand = Command.make("cloudflare-kv-export").pipe(
-	Command.withSubcommands([Commands.dump, Commands.list]),
-)
-
-const cli = Command.run(mainCommand, {
+const cli = Command.run(dumpCommand, {
 	name: "Cloudflare KV export",
 	version: "v0.1.0",
 })
@@ -160,7 +176,6 @@ const cli = Command.run(mainCommand, {
 pipe(
 	cli(process.argv),
 	Effect.provide(Path.layer),
-	Effect.provide(NodeKeyValueStore.layerFileSystem(OUT_PATH)),
 	Effect.provide(NodeContext.layer),
 	Effect.provide(NodeFileSystem.layer),
 	NodeRuntime.runMain,
