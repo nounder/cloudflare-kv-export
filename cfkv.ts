@@ -3,16 +3,22 @@ import {
 	HttpClientRequest,
 	HttpClientResponse,
 } from "@effect/platform"
-import { Chunk, Effect, Option, pipe, Stream } from "effect"
+import { Chunk, Console, Effect, Option, pipe, Stream } from "effect"
+import { typeson } from "./utils"
 
-const { CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_KV_NAMESPACE_ID } = process.env
+const {
+	CLOUDFLARE_ACCOUNT_ID,
+	CLOUDFLARE_KV_NAMESPACE_ID,
+	CLOUDFLARE_API_KEY,
+	WORKER_URL,
+} = process.env
 
 const CF_KV_URL = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/${CLOUDFLARE_KV_NAMESPACE_ID}`
 
 const requestCfKvApi = (url: string, { params = {} } = {}) =>
 	pipe(
 		HttpClientRequest.get(new URL(url, CF_KV_URL + "/")),
-		HttpClientRequest.bearerToken(Bun.env.CF_API_KEY as string),
+		HttpClientRequest.bearerToken(CLOUDFLARE_API_KEY as string),
 		HttpClientRequest.setUrlParams(params),
 		HttpClient.fetchOk,
 	)

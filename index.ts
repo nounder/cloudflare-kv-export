@@ -5,13 +5,10 @@ import {
 	NodeRuntime,
 } from "@effect/platform-node"
 import { Chunk, Console, Effect, Metric, pipe, Schedule, Stream } from "effect"
-import { Typeson } from "typeson"
-import { builtin as typesonBuiltin } from "typeson-registry"
 import * as CFKV from "./cfkv"
+import { typeson } from "./utils"
 
 const OUT_PATH = __dirname + "/out"
-
-const typeson = new Typeson().register([typesonBuiltin])
 
 const persistKeyValuePair = (
 	key: string,
