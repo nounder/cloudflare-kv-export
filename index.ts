@@ -17,7 +17,7 @@ import {
 } from "effect"
 import * as CFKV from "./cfkv"
 import { typeson } from "./utils"
-import { Command, Options } from "@effect/cli"
+import { Command, Options, Options } from "@effect/cli"
 
 const persistKeyValuePair = (
 	key: string,
@@ -114,18 +114,6 @@ const dumpKVData = pipe(
 	Stream.runDrain,
 )
 
-const listFileSystemKeyValueStore = (path: string) =>
-	Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem
-
-		const keys = yield* fs.readDirectory(path, { recursive: true })
-		const resolvedKeys = keys.map(f => decodeURIComponent(f))
-
-		resolvedKeys.sort()
-
-		return Chunk.unsafeFromArray(resolvedKeys)
-	})
-
 const dumpCommand = Command.make(
 	"dump",
 	{
@@ -138,8 +126,6 @@ const dumpCommand = Command.make(
 	args => {
 		return Effect.gen(function* () {
 			const path = yield* Path.Path
-
-			yield* Effect.fork(scheduledLogging)
 
 			const workerUrl = Option.getOrNull(args.worker)
 			const dumpEffect = workerUrl
@@ -156,6 +142,8 @@ const dumpCommand = Command.make(
 			}
 
 			yield* Console.log("Dump directory\t" + path.resolve(args.outdir) + "\n")
+
+			yield* Effect.fork(scheduledLogging)
 
 			yield* pipe(
 				dumpEffect,
