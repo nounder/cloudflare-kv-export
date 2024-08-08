@@ -4,7 +4,7 @@ Super fast Cloudflare KV exporter. Dump your KV data in minutes instead of hours
 
 Normally, Cloudflare API rate-limits to 4 requests per second. Meaning that dumping 100k kv pairs will take hours.
 
-This tool allows you to download 1000s of kv pairs per seconds by using auxiliary Cloudflare worker (found in `worker`) that helps us in downloading the data.
+This tool allows you to download 1000s of kv pairs per second thanks to auxiliary Cloudflare worker (found in `worker`) that helps in downloading the data.
 
 
 ## Setup
@@ -29,7 +29,7 @@ After it's deployed pass worker URL to `--worker-url` option like so:
 bun index.ts --worker-url $WORKER_URL
 ```
 
-and you should be ready to go. All data will be dumped to `dump/` directory.
+When you're done remember to delete the worker.
 
 
 ### Slow (without worker)
@@ -47,12 +47,11 @@ This will use Cloudflare API with stellar speed of ~4 keys per second.
 
 You can use pass custom `--outdir` to specify directory where to dump KV data.
 
-If you can also tweak number of concurrent connections with `--worker-rps` and `--worker-chunk`. Pass `--help` for more details.
+You can also adjust performance parameters, like number of concurrent connections with `--worker-rps` and `--worker-chunk`. Pass `--help` for more details.
 
 
 ## Output
 
 You will find KV data in directory specified by `--outdir` (default `dump/`.) Each file is individual key-value pair. Keys are url-encoded in file name.
-
 
 
