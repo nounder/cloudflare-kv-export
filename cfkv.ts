@@ -3,7 +3,7 @@ import {
 	HttpClientRequest,
 	HttpClientResponse,
 } from "@effect/platform"
-import { Chunk, Console, Effect, Option, pipe, Stream } from "effect"
+import { Chunk, Effect, Option, pipe, Stream } from "effect"
 
 const {
 	CLOUDFLARE_ACCOUNT_ID,
@@ -59,7 +59,7 @@ export const getKeyValuePair = (key: string, withMetadata = false) =>
 		{
 			key: Effect.succeed(key),
 			value: getKeyValue(key).pipe(
-				HttpClientResponse.json, //
+				HttpClientResponse.arrayBuffer, //
 			),
 			metadata: withMetadata ? getKeyMetadata(key) : Effect.succeed(null),
 		},

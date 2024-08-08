@@ -1,10 +1,6 @@
-import { FileSystem, KeyValueStore, Path } from "@effect/platform"
-import {
-	NodeContext,
-	NodeFileSystem,
-	NodeKeyValueStore,
-	NodeRuntime,
-} from "@effect/platform-node"
+import { Command, Options } from "@effect/cli"
+import { FileSystem, Path } from "@effect/platform"
+import { NodeContext, NodeFileSystem, NodeRuntime } from "@effect/platform-node"
 import {
 	Chunk,
 	Console,
@@ -16,23 +12,21 @@ import {
 	Stream,
 } from "effect"
 import * as CFKV from "./cfkv"
-import { typeson } from "./utils"
-import { Command, Options, Options } from "@effect/cli"
 
 const persistKeyValuePair = (
 	key: string,
-	value: any,
-	metadata?: Record<string, any>,
+	value: ArrayBuffer,
+	basePath: string,
 ) =>
 	Effect.gen(function* () {
-		const kv = yield* KeyValueStore.KeyValueStore
+		const path = yield* Path.Path
+		const fs = yield* FileSystem.FileSystem
 
 		yield* Effect.all([
-			kv.set(key, typeson.stringifySync(value)),
-
-			metadata
-				? kv.set(key + ":__metadata", JSON.stringify(metadata))
-				: Effect.succeedNone,
+			fs.writeFile(
+				path.resolve(basePath, encodeURIComponent(key)),
+				new Uint8Array(value),
+			),
 		])
 	})
 
@@ -58,25 +52,31 @@ const scheduledLogging = pipe(
 /**
  * Dumps KV data using helper worker instead of using heavy rate-limited Cloudflare API.
  */
-const dumpKVDataWithWorker = (args: { workerUrl: string }) =>
+const dumpKVDataWithWorker = (args: {
+	keyPattern?: RegExp
+	workerUrl: string
+	rps: number
+	chunkSize: number
+	outdir: string
+}) =>
 	pipe(
 		CFKV.streamKeys(),
-		Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
+		args.keyPattern ? Stream.filter(key => args.keyPattern!.test(key)) : v => v,
 		Stream.rechunk(64),
 		Stream.throttle({
 			cost: Chunk.size,
 			duration: "1 second",
-			units: 1000,
+			units: args.rps,
 		}),
 		Stream.tap(_ => keysCounter(Effect.succeedNone)),
-		Stream.rechunk(128),
+		Stream.rechunk(args.chunkSize),
 		Stream.mapChunksEffect(chunk =>
 			CFKV.getKeyValuePairsWithWorker(
 				Chunk.toReadonlyArray(chunk),
 				args.workerUrl,
 			).pipe(Effect.andThen(Chunk.unsafeFromArray)),
 		),
-		Stream.mapEffect(([k, v]) => persistKeyValuePair(k, v), {
+		Stream.mapEffect(([k, v]) => persistKeyValuePair(k, v, args.outdir), {
 			concurrency: "unbounded",
 		}),
 		Stream.tap(_ => processedKeysCounter(Effect.succeedNone)),
@@ -91,46 +91,70 @@ const dumpKVDataWithWorker = (args: { workerUrl: string }) =>
  * We also make chunks smaller for Stream.throttle
  * See: https://developers.cloudflare.com/fundamentals/api/reference/limits/
  */
-const dumpKVData = pipe(
-	CFKV.streamKeys(),
-	Stream.filter(key => /^flow:(\w+):action_tracks:(\d+)$/.test(key)),
-	Stream.rechunk(10),
-	Stream.throttle({
-		cost: Chunk.size,
-		duration: "1 second",
-		units: 4,
-	}),
-	Stream.tap(_ => keysCounter(Effect.succeedNone)),
-	Stream.mapEffect(
-		key =>
-			pipe(
-				CFKV.getKeyValuePair(key, false),
-				Effect.map(v => persistKeyValuePair(v.key, v.value)),
-			),
-		{ concurrency: "unbounded" },
-	),
-	Stream.tap(v => processedKeysCounter(v)),
-	// drain the stream and ignore the output and convert to an Effect
-	Stream.runDrain,
-)
+const dumpKVData = (args: { keyPattern?: RegExp; outdir: string }) =>
+	pipe(
+		CFKV.streamKeys(),
+		args.keyPattern ? Stream.filter(key => args.keyPattern!.test(key)) : v => v,
+		Stream.rechunk(10),
+		Stream.throttle({
+			cost: Chunk.size,
+			duration: "1 second",
+			units: 4,
+		}),
+		Stream.tap(_ => keysCounter(Effect.succeedNone)),
+		Stream.mapEffect(
+			key =>
+				pipe(
+					CFKV.getKeyValuePair(key, false),
+					Effect.map(v => persistKeyValuePair(v.key, v.value, args.outdir)),
+				),
+			{ concurrency: "unbounded" },
+		),
+		Stream.tap(v => processedKeysCounter(v)),
+		// drain the stream and ignore the output and convert to an Effect
+		Stream.runDrain,
+	)
 
 const dumpCommand = Command.make(
 	"dump",
 	{
 		outdir: Options.directory("outdir").pipe(Options.withDefault("dump/")),
-		worker: Options.text("worker").pipe(
+		workerUrl: Options.text("worker-url").pipe(
 			Options.optional,
 			Options.withDescription("URL to a auxilary worker for faster exporting"),
+		),
+		workerRps: Options.integer("worker-rps").pipe(
+			Options.withDescription("Maximum number of requests per second"),
+			Options.withDefault(100),
+		),
+		workerChunkSize: Options.integer("worker-chunk").pipe(
+			Options.withDescription("Number of keys to fetch in a single request"),
+			Options.withDefault(32),
+		),
+		keyPattern: Options.text("key-pattern").pipe(
+			Options.optional,
+			Options.withDescription("Pattern to filter keys"),
 		),
 	},
 	args => {
 		return Effect.gen(function* () {
 			const path = yield* Path.Path
 
-			const workerUrl = Option.getOrNull(args.worker)
+			const keyRegexp = Option.map(args.keyPattern, v => new RegExp(v))
+
+			const workerUrl = Option.getOrNull(args.workerUrl)
 			const dumpEffect = workerUrl
-				? dumpKVDataWithWorker({ workerUrl })
-				: dumpKVData
+				? dumpKVDataWithWorker({
+						workerUrl,
+						keyPattern: Option.getOrUndefined(keyRegexp),
+						rps: args.workerRps,
+						chunkSize: args.workerChunkSize,
+						outdir: args.outdir,
+				  })
+				: dumpKVData({
+						keyPattern: Option.getOrUndefined(keyRegexp),
+						outdir: args.outdir,
+				  })
 
 			if (!workerUrl) {
 				yield* Console.log(
@@ -145,11 +169,11 @@ const dumpCommand = Command.make(
 
 			yield* Effect.fork(scheduledLogging)
 
-			yield* pipe(
-				dumpEffect,
+			const fs = yield* FileSystem.FileSystem
 
-				Effect.provide(NodeKeyValueStore.layerFileSystem(args.outdir)),
-			)
+			yield* fs.makeDirectory(args.outdir, { recursive: true })
+
+			yield* dumpEffect
 
 			yield* Console.log("Done!")
 		})
